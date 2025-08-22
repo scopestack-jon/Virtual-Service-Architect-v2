@@ -10,7 +10,7 @@ import { Send, Loader2, MessageSquare, Clock, Target, FileText, X } from "lucide
 import type { ChatMessage, ChatSession } from "../types/chat"
 import { ChatMessageComponent } from "./chat-message"
 import { matchServices } from "../data/services"
-import { analyzeProject } from "../utils/aiAnalysis"
+import { analyzeProject, generateAIResponse } from "../utils/aiAnalysis"
 import { WBSDisplay } from "./wbs-display"
 import { generateWBS } from "../utils/wbsGenerator"
 import type { WorkBreakdownStructure } from "../types/wbs"
@@ -20,6 +20,103 @@ import { PricingTab } from "./pricing-tab"
 import { DocumentsTab } from "./documents-tab"
 import type { ServiceMatch } from "../data/services"
 import { generateClarifyingQuestions } from "../utils/questionGenerator"
+import { config } from "../lib/config"
+
+// AI-powered service matching function
+function findBestServiceMatches(userInput: string, availableServices: any[], analysis: any) {
+  const input = userInput.toLowerCase()
+  const matches: Array<{
+    service: any
+    confidence: number
+    matchedKeywords: string[]
+  }> = []
+
+  // Score each service based on relevance
+  availableServices.forEach(service => {
+    let score = 0
+    const matchedKeywords: string[] = []
+    
+    // Extract service properties from the API response structure
+    const serviceName = service.attributes?.name || service.name || ""
+    const serviceDescription = service.attributes?.["service-description"] || service.description || ""
+    const serviceType = service.attributes?.["service-type"] || service.category || ""
+    const tagList = service.attributes?.["tag-list"] || service.keywords || []
+    
+    // Check service name relevance
+    if (serviceName && input.includes(serviceName.toLowerCase())) {
+      score += 40
+      matchedKeywords.push(serviceName)
+    }
+    
+    // Check service type relevance
+    if (serviceType && input.includes(serviceType.toLowerCase())) {
+      score += 30
+      matchedKeywords.push(serviceType)
+    }
+    
+    // Check description relevance
+    if (serviceDescription) {
+      const desc = serviceDescription.toLowerCase()
+      const descWords = desc.split(' ')
+      const inputWords = input.split(' ')
+      
+      const commonWords = inputWords.filter(word => 
+        word.length > 3 && descWords.includes(word)
+      )
+      
+      if (commonWords.length > 0) {
+        score += commonWords.length * 10
+        matchedKeywords.push(...commonWords)
+      }
+    }
+    
+    // Check tag list relevance
+    if (tagList && Array.isArray(tagList)) {
+      tagList.forEach((tag: string) => {
+        if (input.includes(tag.toLowerCase())) {
+          score += 15
+          matchedKeywords.push(tag)
+        }
+      })
+    }
+    
+    // Check for specific technology keywords in the input
+    const techKeywords = ['network', 'wireless', 'office 365', 'microsoft', 'cloud', 'security', 'backup', 'migration']
+    techKeywords.forEach(keyword => {
+      if (input.includes(keyword) && (serviceName.toLowerCase().includes(keyword) || serviceDescription.toLowerCase().includes(keyword))) {
+        score += 25
+        matchedKeywords.push(keyword)
+      }
+    })
+    
+    // Bonus for complexity match (if available)
+    if (analysis.complexity && serviceType) {
+      if (analysis.complexity.toLowerCase() === serviceType.toLowerCase()) {
+        score += 20
+      }
+    }
+    
+    // Bonus for industry relevance
+    if (analysis.industry && serviceType) {
+      if (analysis.industry.toLowerCase().includes(serviceType.toLowerCase()) ||
+          serviceType.toLowerCase().includes(analysis.industry.toLowerCase())) {
+        score += 15
+      }
+    }
+    
+    // Only include services with meaningful scores
+    if (score > 20) {
+      matches.push({
+        service: service, // Return the original service object with full attributes
+        confidence: Math.min(score, 100), // Cap at 100%
+        matchedKeywords: [...new Set(matchedKeywords)] // Remove duplicates
+      })
+    }
+  })
+  
+  // Sort by confidence (highest first)
+  return matches.sort((a, b) => b.confidence - a.confidence)
+}
 
 export function ChatInterface() {
   const [session, setSession] = useState<ChatSession>({
@@ -29,7 +126,7 @@ export function ChatInterface() {
         id: "welcome",
         type: "system",
         content:
-          "Welcome to ScopeStack! I'm here to help you scope your IT project. Please describe what you're looking to accomplish.",
+          "Welcome to ScopeStack! I'm here to help you scope your IT project. I can help you with:\n\n• **Infrastructure Projects** - Network upgrades, server virtualization, datacenter improvements\n• **Cloud Migration** - AWS, Azure, Google Cloud, Office 365 migrations\n• **Security & Compliance** - Security audits, HIPAA/SOX compliance, cybersecurity assessments\n• **Data Protection** - Backup solutions, disaster recovery, business continuity\n\n**To get started, describe your project in detail.** For example:\n• \"I need to upgrade our network infrastructure for 50 users across 3 offices\"\n• \"We want to migrate our email to Office 365 and need help with the setup\"\n• \"Looking for a security audit to meet HIPAA compliance requirements\"\n\nWhat can I help you with today?",
         timestamp: new Date(),
       },
     ],
@@ -44,6 +141,21 @@ export function ChatInterface() {
   const [apiStatus, setApiStatus] = useState<"connected" | "fallback" | "checking">("checking")
   const [selectedServices, setSelectedServices] = useState<ServiceMatch[]>([])
   const [hasGeneratedWBS, setHasGeneratedWBS] = useState(false)
+
+  // Check API key status on component mount
+  useEffect(() => {
+    const checkApiStatus = () => {
+      if (config.scopeStackApiKey) {
+        console.log("🔑 API Key found, testing connection...")
+        setApiStatus("checking")
+      } else {
+        console.warn("⚠️ No API key found - using fallback mode")
+        setApiStatus("fallback")
+      }
+    }
+    
+    checkApiStatus()
+  }, [])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -135,6 +247,197 @@ export function ChatInterface() {
 
       console.log(`❓ Questioning result:`, questioning)
 
+      // If we have API connectivity, proceed with AI-powered service matching
+      if (apiStatus === "connected" || apiStatus === "checking") {
+        console.log("🚀 API is available - proceeding with AI-powered service matching")
+        
+        try {
+          // First, get available services from the ScopeStack API
+          const { scopeStackApi } = await import("../lib/scopestack-api")
+          const servicesResponse = await scopeStackApi.getServices()
+          
+          if (servicesResponse.success && servicesResponse.data && servicesResponse.data.length > 0) {
+            console.log("✅ Got services from API, using AI to find best matches")
+            
+            // Use AI analysis to determine the best service matches
+            const analysis = await analyzeProject(fullContext)
+            
+            // Create a smart service matching algorithm
+            const matchedServices = findBestServiceMatches(fullContext, servicesResponse.data, analysis)
+            
+            if (matchedServices.length > 0) {
+              console.log("🎯 AI found", matchedServices.length, "relevant services")
+              
+              // Create response message
+              const topMatch = matchedServices[0]
+              const responseMessage = `Great! I've analyzed your requirements using AI and found ${matchedServices.length} relevant service${matchedServices.length > 1 ? 's' : ''} that could help with your project.
+
+The top recommended service is **${topMatch.service.name}** with a ${topMatch.confidence}% match confidence.
+
+Here are the services I found for you:`
+
+              const aiMessage: ChatMessage = {
+                id: `ai-${Date.now()}`,
+                type: "ai",
+                content: responseMessage,
+                timestamp: new Date(),
+              }
+
+              setSession((prev) => ({
+                ...prev,
+                messages: [...prev.messages, aiMessage],
+                projectContext: {
+                  ...prev.projectContext,
+                  description: fullContext,
+                  needsMoreInfo: false,
+                  hasAskedQuestions: false,
+                },
+              }))
+
+              // Convert and show the matched services
+              const convertedMatches = matchedServices.map((match: any) => {
+                // Extract the original service data from the API response
+                const originalService = match.service
+                
+                console.log("🔍 Converting service:", {
+                  id: originalService.id,
+                  name: originalService.attributes?.name,
+                  description: originalService.attributes?.["service-description"],
+                  type: originalService.attributes?.["service-type"]
+                })
+                
+                // Get subservices if they exist in the included data
+                let subservices: any[] = []
+                if (originalService.relationships?.subservices?.data) {
+                  // This would need to be expanded with the actual subservice data
+                  subservices = originalService.relationships.subservices.data.map((sub: any) => ({
+                    id: sub.id,
+                    name: "Subservice", // Would need to get from included data
+                    description: "Subservice description",
+                    estimatedHours: 8
+                  }))
+                }
+                
+                return {
+                  service: {
+                    id: originalService.id,
+                    name: originalService.attributes?.name || "Unknown Service",
+                    description: originalService.attributes?.["service-description"] || "No description available",
+                    category: originalService.attributes?.["service-type"] || "General",
+                    keywords: originalService.attributes?.["tag-list"] || [],
+                    estimatedHours: parseFloat(originalService.attributes?.["total-hours"] || "40"),
+                    complexity: "Medium" as const, // Could be derived from service-type
+                    source: "scopestack" as const,
+                    subservices: subservices,
+                    // Additional API-specific fields
+                    sku: originalService.attributes?.sku || "",
+                    paymentFrequency: originalService.attributes?.["payment-frequency"] || "",
+                    minimumQuantity: parseFloat(originalService.attributes?.["minimum-quantity"] || "1"),
+                    state: originalService.attributes?.state || "active",
+                    guidance: originalService.attributes?.guidance || "",
+                    // Scope language fields
+                    scopeLanguage: {
+                      outOfScope: originalService.attributes?.languages?.out || "",
+                      customerResponsibility: originalService.attributes?.languages?.customer || "",
+                      assumptions: originalService.attributes?.languages?.assumptions || "",
+                      deliverables: originalService.attributes?.languages?.deliverables || "",
+                      sowLanguage: originalService.attributes?.languages?.sow_language || "",
+                      demoLanguage: originalService.attributes?.languages?.demo_language || "",
+                      internalOnly: originalService.attributes?.languages?.internal_only || "",
+                      designLanguage: originalService.attributes?.languages?.design_language || "",
+                      planningLanguage: originalService.attributes?.languages?.planning_language || "",
+                      implementationLanguage: originalService.attributes?.languages?.implementation_language || "",
+                      serviceLevelAgreement: originalService.attributes?.languages?.service_level_agreement || ""
+                    }
+                  },
+                  confidence: match.confidence,
+                  matchedKeywords: match.matchedKeywords
+                }
+              })
+              
+              setSelectedServices(convertedMatches)
+            } else {
+              // No good matches found
+              const noMatchMessage = `I've analyzed your requirements using AI, but I couldn't find exact service matches in our database. 
+
+Could you provide more specific details about:
+• What specific technology or system you're working with?
+• The scale of your project (number of users, devices, locations)?
+• Any specific requirements or constraints?`
+
+              const aiMessage: ChatMessage = {
+                id: `ai-${Date.now()}`,
+                type: "ai",
+                content: noMatchMessage,
+                timestamp: new Date(),
+              }
+
+              setSession((prev) => ({
+                ...prev,
+                messages: [...prev.messages, aiMessage],
+                projectContext: {
+                  ...prev.projectContext,
+                  description: fullContext,
+                  needsMoreInfo: true,
+                  hasAskedQuestions: false,
+                },
+              }))
+            }
+          } else {
+            console.log("⚠️ No services available from API, using fallback")
+            // Fallback to local AI analysis
+            const analysis = await analyzeProject(fullContext)
+            const aiResponse = generateAIResponse(fullContext, [], analysis)
+            
+            const aiMessage: ChatMessage = {
+              id: `ai-${Date.now()}`,
+              type: "ai",
+              content: aiResponse,
+              timestamp: new Date(),
+            }
+
+            setSession((prev) => ({
+              ...prev,
+              messages: [...prev.messages, aiMessage],
+              projectContext: {
+                ...prev.projectContext,
+                description: fullContext,
+                needsMoreInfo: false,
+                hasAskedQuestions: false,
+              },
+            }))
+          }
+        } catch (error) {
+          console.error("❌ API call failed, using local AI analysis:", error)
+          
+          // Fallback to local AI analysis if API fails
+          const analysis = await analyzeProject(fullContext)
+          const aiResponse = generateAIResponse(fullContext, [], analysis)
+          
+          const aiMessage: ChatMessage = {
+            id: `ai-${Date.now()}`,
+            type: "ai",
+            content: aiResponse,
+            timestamp: new Date(),
+          }
+
+          setSession((prev) => ({
+            ...prev,
+            messages: [...prev.messages, aiMessage],
+            projectContext: {
+              ...prev.projectContext,
+              description: fullContext,
+              needsMoreInfo: false,
+              hasAskedQuestions: false,
+            },
+          }))
+        }
+        
+        setIsLoading(false)
+        return
+      }
+
+      // Only ask questions if API is not available (fallback mode)
       if (questioning.needsQuestioning && !session.projectContext.hasAskedQuestions) {
         let contextualResponse = ""
 
@@ -171,9 +474,6 @@ export function ChatInterface() {
             hasAskedQuestions: true,
           },
         }))
-
-        setIsLoading(false)
-        return
       }
 
       if (session.projectContext.needsMoreInfo && session.projectContext.pendingQuestions) {
@@ -320,7 +620,7 @@ export function ChatInterface() {
   const renderTabContent = () => {
     switch (currentTab) {
       case "project-details":
-        return <ProjectDetailsTab />
+        return <ProjectDetailsTab selectedServices={selectedServices} projectContext={session.projectContext} />
       case "wbs":
         return generatedWBS ? (
           <WBSDisplay wbs={generatedWBS} />
@@ -409,6 +709,51 @@ export function ChatInterface() {
             />
           ))}
 
+          {/* Quick Start Buttons - only show after welcome message */}
+          {session.messages.length === 1 && (
+            <div className="space-y-3 mb-6">
+              <p className="text-sm text-gray-600 font-medium">Quick Start Examples:</p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => {
+                    setInputValue("I need to upgrade our network infrastructure for 50 users across 3 offices")
+                  }}
+                  className="text-left p-3 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg text-sm transition-colors"
+                >
+                  <div className="font-medium text-blue-900">Network Upgrade</div>
+                  <div className="text-blue-700 text-xs">50 users, 3 offices</div>
+                </button>
+                <button
+                  onClick={() => {
+                    setInputValue("We want to migrate our email to Office 365 and need help with the setup")
+                  }}
+                  className="text-left p-3 bg-green-50 hover:bg-green-100 border border-green-200 rounded-lg text-sm transition-colors"
+                >
+                  <div className="font-medium text-green-900">Office 365 Migration</div>
+                  <div className="text-green-700 text-xs">Email migration</div>
+                </button>
+                <button
+                  onClick={() => {
+                    setInputValue("Looking for a security audit to meet HIPAA compliance requirements")
+                  }}
+                  className="text-left p-3 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg text-sm transition-colors"
+                >
+                  <div className="font-medium text-red-900">Security Audit</div>
+                  <div className="text-red-700 text-xs">HIPAA compliance</div>
+                </button>
+                <button
+                  onClick={() => {
+                    setInputValue("Need backup and disaster recovery solution for our small business")
+                  }}
+                  className="text-left p-3 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-lg text-sm transition-colors"
+                >
+                  <div className="font-medium text-purple-900">Backup & DR</div>
+                  <div className="text-purple-700 text-xs">Small business</div>
+                </button>
+              </div>
+            </div>
+          )}
+
           {isLoading && (
             <div className="flex gap-3 mb-6">
               <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
@@ -426,6 +771,46 @@ export function ChatInterface() {
         </div>
 
         <div className="bg-white border-t border-gray-200 p-4">
+          {/* Manual API Key Input for Testing */}
+          {!config.scopeStackApiKey && (
+            <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-sm font-medium text-yellow-900">🔑 API Key Required</span>
+                <span className="text-xs text-yellow-700">(Development Mode)</span>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Enter your ScopeStack API key here"
+                  className="flex-1 text-xs p-2 border border-yellow-300 rounded"
+                  onChange={(e) => {
+                    if (e.target.value.trim()) {
+                      localStorage.setItem('SCOPESTACK_API_KEY', e.target.value.trim())
+                      console.log("🔑 API Key stored in localStorage")
+                      // Reload the page to use the new key
+                      setTimeout(() => window.location.reload(), 500)
+                    }
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    const key = localStorage.getItem('SCOPESTACK_API_KEY')
+                    if (key) {
+                      console.log("🔑 Using stored API key")
+                      window.location.reload()
+                    }
+                  }}
+                  className="px-3 py-2 bg-yellow-600 text-white text-xs rounded hover:bg-yellow-700"
+                >
+                  Use Stored Key
+                </button>
+              </div>
+              <p className="text-xs text-yellow-700 mt-1">
+                Get your API key from <a href="https://scopestack.io" target="_blank" rel="noopener noreferrer" className="underline">scopestack.io</a>
+              </p>
+            </div>
+          )}
+
           {selectedServices.length > 0 && !hasGeneratedWBS && (
             <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <div className="flex items-center justify-between">

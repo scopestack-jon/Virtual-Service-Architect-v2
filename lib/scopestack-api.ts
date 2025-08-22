@@ -1,3 +1,5 @@
+import { config } from "./config"
+
 // ScopeStack API client with authentication, error handling, and status tracking
 export interface ScopeStackService {
   id: string
@@ -67,8 +69,14 @@ class ScopeStackApiClient {
   }
 
   constructor() {
-    // In production, this would come from environment variables
-    this.apiKey = process.env.NEXT_PUBLIC_SCOPESTACK_API_KEY || null
+    // Use the configuration file instead of process.env
+    this.apiKey = config.scopeStackApiKey
+    
+    console.log("🔑 ScopeStack API Client initialized:", {
+      hasApiKey: !!this.apiKey,
+      keyLength: this.apiKey?.length || 0,
+      baseUrl: config.scopeStackBaseUrl
+    })
   }
 
   getStatus(): ScopeStackApiStatus {
@@ -92,7 +100,7 @@ class ScopeStackApiClient {
       }
 
       if (this.apiKey) {
-        headers["Authorization"] = `Bearer ${this.apiKey}`
+        (headers as any)["Authorization"] = `Bearer ${this.apiKey}`
       }
 
       const fullUrl = `${this.baseUrl}${endpoint}`
@@ -200,14 +208,20 @@ class ScopeStackApiClient {
 
     const endpoint = `/${this.accountSlug}/v1/services?include=phase,subservices`
     console.log(`🔍 ScopeStack API: Fetching services from ${endpoint}`)
-    const result = await this.makeRequest<ScopeStackService[]>(endpoint)
+    const result = await this.makeRequest<any>(endpoint)
 
     if (result.success) {
-      console.log(`✅ ScopeStack API: Successfully fetched ${result.data?.length || 0} services`)
-      if (result.data && typeof result.data === "object" && "included" in result.data) {
-        console.log(
-          `📦 ScopeStack API: Response includes ${(result.data as any).included?.length || 0} related resources`,
-        )
+      // Extract services from JSON:API response structure
+      const services = result.data?.data || []
+      const included = result.data?.included || []
+      
+      console.log(`✅ ScopeStack API: Successfully fetched ${services.length} services`)
+      console.log(`📦 ScopeStack API: Response includes ${included.length} related resources`)
+      
+      // Return the services array directly
+      return {
+        success: true,
+        data: services
       }
     } else {
       console.log(`❌ ScopeStack API: Failed to fetch services - ${result.error}`)
@@ -269,9 +283,9 @@ class ScopeStackApiClient {
     })
 
     if (result.success) {
-      const matchCount = result.data?.matches?.length || 0
+      const matchCount = (result.data as any)?.matches?.length || 0
       console.log(`✅ ScopeStack API: Found ${matchCount} service matches`)
-      result.data?.matches?.forEach((match, index) => {
+      ;(result.data as any)?.matches?.forEach((match: any, index: number) => {
         console.log(`   ${index + 1}. ${match.service.name} (${match.confidence}% confidence)`)
       })
     } else {
@@ -279,7 +293,7 @@ class ScopeStackApiClient {
       result.fallback = true
     }
 
-    return result
+    return result as any
   }
 
   async testConnection(): Promise<ScopeStackApiResponse<{ data: any; authenticated: boolean }>> {
@@ -293,11 +307,13 @@ class ScopeStackApiClient {
     const result = await this.makeRequest<{ data: any; authenticated: boolean }>("/v1/me")
 
     if (result.success) {
-      result.data = {
-        ...result.data,
-        authenticated: true,
+      return {
+        ...result,
+        data: {
+          ...(result.data || {}),
+          authenticated: true,
+        },
       }
-      console.log(`✅ ScopeStack API: Connected as ${result.data?.data?.attributes?.name || "Unknown User"}`)
     }
 
     return result

@@ -14,6 +14,10 @@ export interface ChatSession {
     industry?: string
     complexity?: string
     timeline?: string
+    needsMoreInfo?: boolean
+    pendingQuestions?: any[]
+    hasAskedQuestions?: boolean
+    additionalInfo?: string
   }
 }
 
