@@ -245,7 +245,7 @@ class ScopeStackApiClient {
     )
   }
 
-  async getPhases(): Promise<ScopeStackApiResponse<ScopeStackPhase[]>> {
+  async getPhases(): Promise<ScopeStackApiResponse<any[]>> {
     const hasSlug = await this.ensureAccountSlug()
     if (!hasSlug) {
       return {
@@ -255,7 +255,22 @@ class ScopeStackApiClient {
       }
     }
 
-    return this.makeRequest<ScopeStackPhase[]>(`/${this.accountSlug}/v1/phases`)
+    console.log(`🔍 ScopeStack API: Fetching active phases from /${this.accountSlug}/v1/phases?filter[active]=true`)
+    const result = await this.makeRequest<any[]>(`/${this.accountSlug}/v1/phases?filter[active]=true`)
+
+    if (result.success) {
+      console.log(`✅ ScopeStack API: Successfully fetched ${result.data?.data?.length || 0} phases`)
+
+      // Return the data array from the JSON:API response
+      return {
+        success: true,
+        data: result.data?.data || []
+      }
+    } else {
+      console.log(`❌ ScopeStack API: Failed to fetch phases - ${result.error}`)
+    }
+
+    return result
   }
 
   async matchServices(userInput: string): Promise<
@@ -354,9 +369,139 @@ class ScopeStackApiClient {
     const result = await this.makeRequest<any[]>(`/${this.accountSlug}/v1/subservices`)
 
     if (result.success) {
-      console.log(`✅ ScopeStack API: Successfully fetched ${result.data?.length || 0} subservices`)
+      console.log(`✅ ScopeStack API: Successfully fetched ${result.data?.data?.length || 0} subservices`)
+
+      // Return the data array from the JSON:API response
+      return {
+        success: true,
+        data: result.data?.data || []
+      }
     } else {
       console.log(`❌ ScopeStack API: Failed to fetch subservices - ${result.error}`)
+      return result
+    }
+  }
+
+  async getProjectServices(): Promise<ScopeStackApiResponse<any[]>> {
+    const hasSlug = await this.ensureAccountSlug()
+    if (!hasSlug) {
+      return {
+        success: false,
+        error: "Unable to get account slug for API requests",
+        fallback: true,
+      }
+    }
+
+    console.log(`🔍 ScopeStack API: Fetching active services from /${this.accountSlug}/v1/services?filter[state]=active&include=phase,resource,service-category,subservices,subservices.resource`)
+    const result = await this.makeRequest<any[]>(`/${this.accountSlug}/v1/services?filter[state]=active&include=phase,resource,service-category,subservices,subservices.resource`)
+
+    if (result.success) {
+      const services = result.data?.data || []
+      const included = result.data?.included || []
+
+      console.log(`✅ ScopeStack API: Successfully fetched ${services.length} active services`)
+      console.log(`📦 ScopeStack API: Response includes ${included.length} related resources`)
+
+      // Log sample service with relationships
+      if (services.length > 0) {
+        console.log('📊 ScopeStack API: Sample service with relationships:', {
+          id: services[0].id,
+          name: services[0].attributes?.name,
+          relationships: services[0].relationships
+        })
+      }
+
+      // Return the data array from the JSON:API response
+      return {
+        success: true,
+        data: services
+      }
+    } else {
+      console.log(`❌ ScopeStack API: Failed to fetch active services - ${result.error}`)
+    }
+
+    return result
+  }
+
+  async getLineOfBusinesses(): Promise<ScopeStackApiResponse<any[]>> {
+    const hasSlug = await this.ensureAccountSlug()
+    if (!hasSlug) {
+      return {
+        success: false,
+        error: "Unable to get account slug for API requests",
+        fallback: true,
+      }
+    }
+
+    console.log(`🔍 ScopeStack API: Fetching lines of business from /${this.accountSlug}/v1/line-of-businesses`)
+    const result = await this.makeRequest<any[]>(`/${this.accountSlug}/v1/line-of-businesses`)
+
+    if (result.success) {
+      console.log(`✅ ScopeStack API: Successfully fetched ${result.data?.data?.length || 0} lines of business`)
+
+      // Return the data array from the JSON:API response
+      return {
+        success: true,
+        data: result.data?.data || []
+      }
+    } else {
+      console.log(`❌ ScopeStack API: Failed to fetch lines of business - ${result.error}`)
+    }
+
+    return result
+  }
+
+  async getServiceCategories(): Promise<ScopeStackApiResponse<any[]>> {
+    const hasSlug = await this.ensureAccountSlug()
+    if (!hasSlug) {
+      return {
+        success: false,
+        error: "Unable to get account slug for API requests",
+        fallback: true,
+      }
+    }
+
+    console.log(`🔍 ScopeStack API: Fetching service categories from /${this.accountSlug}/v1/service-categories`)
+    const result = await this.makeRequest<any[]>(`/${this.accountSlug}/v1/service-categories`)
+
+    if (result.success) {
+      console.log(`✅ ScopeStack API: Successfully fetched ${result.data?.data?.length || 0} service categories`)
+
+      // Return the data array from the JSON:API response
+      return {
+        success: true,
+        data: result.data?.data || []
+      }
+    } else {
+      console.log(`❌ ScopeStack API: Failed to fetch service categories - ${result.error}`)
+    }
+
+    return result
+  }
+
+  async getResources(): Promise<ScopeStackApiResponse<any[]>> {
+    const hasSlug = await this.ensureAccountSlug()
+    if (!hasSlug) {
+      return {
+        success: false,
+        error: "Unable to get account slug for API requests",
+        fallback: true,
+      }
+    }
+
+    console.log(`🔍 ScopeStack API: Fetching active resources from /${this.accountSlug}/v1/resources?filter[active]=true`)
+    const result = await this.makeRequest<any[]>(`/${this.accountSlug}/v1/resources?filter[active]=true`)
+
+    if (result.success) {
+      console.log(`✅ ScopeStack API: Successfully fetched ${result.data?.data?.length || 0} active resources`)
+
+      // Return the data array from the JSON:API response
+      return {
+        success: true,
+        data: result.data?.data || []
+      }
+    } else {
+      console.log(`❌ ScopeStack API: Failed to fetch resources - ${result.error}`)
     }
 
     return result

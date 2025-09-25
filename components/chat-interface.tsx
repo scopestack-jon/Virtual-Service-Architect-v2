@@ -21,6 +21,9 @@ import { DocumentsTab } from "./documents-tab"
 import type { ServiceMatch } from "../data/services"
 import { generateClarifyingQuestions } from "../utils/questionGenerator"
 import { config } from "../lib/config"
+import { CallRecordingConnector } from "./call-recording-connector"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Phone } from "lucide-react"
 
 // AI-powered service matching function
 function findBestServiceMatches(userInput: string, availableServices: any[], analysis: any) {
@@ -136,7 +139,7 @@ export function ChatInterface() {
   const [inputValue, setInputValue] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const [currentTab, setCurrentTab] = useState<"project-details" | "wbs" | "pricing" | "documents">("project-details")
+  const [currentTab, setCurrentTab] = useState<"project-details" | "wbs" | "pricing" | "documents" | "call-recordings">("project-details")
   const [generatedWBS, setGeneratedWBS] = useState<WorkBreakdownStructure | null>(null)
   const [apiStatus, setApiStatus] = useState<"connected" | "fallback" | "checking">("checking")
   const [selectedServices, setSelectedServices] = useState<ServiceMatch[]>([])
@@ -637,6 +640,16 @@ Could you provide more specific details about:
         return <PricingTab />
       case "documents":
         return <DocumentsTab />
+      case "call-recordings":
+        return (
+          <CallRecordingConnector
+            onTranscriptAnalyzed={(analysis) => {
+              // Automatically add the transcript content to the chat
+              const transcriptMessage = `Based on the call recording analysis:\n\nProject Type: ${analysis.projectType}\n\nRequirements identified:\n${analysis.requirements.map(r => `• ${r}`).join('\n')}\n\nPlease help me scope this project.`
+              setInputValue(transcriptMessage)
+            }}
+          />
+        )
       default:
         return <ProjectDetailsTab />
     }
@@ -891,6 +904,15 @@ Could you provide more specific details about:
               className="px-4"
             >
               Documents
+            </Button>
+            <Button
+              variant={currentTab === "call-recordings" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setCurrentTab("call-recordings")}
+              className="px-4 flex items-center gap-2"
+            >
+              <Phone className="w-4 h-4" />
+              Call Recordings
             </Button>
           </div>
         </div>
