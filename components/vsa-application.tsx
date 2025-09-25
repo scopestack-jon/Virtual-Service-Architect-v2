@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { WorkspaceLayout } from "./workspace-layout"
+import { FloatingAiAssistant } from "./ui/glowing-ai-chat-assistant"
 import { useLocalStorage, clearVSAData } from "../lib/use-local-storage"
 
 // Sample data
@@ -240,11 +241,14 @@ export function VSAApplication() {
   }, []) // Only on initial mount
 
   return (
-    <WorkspaceLayout
-      projects={projects}
-      selectedProject={selectedProject}
-      onProjectSelect={handleProjectSelect}
-      onProjectUpdate={handleProjectUpdate}
-    />
+    <div className="relative">
+      <WorkspaceLayout
+        projects={projects}
+        selectedProject={selectedProject}
+        onProjectSelect={handleProjectSelect}
+        onProjectUpdate={handleProjectUpdate}
+      />
+      <FloatingAiAssistant />
+    </div>
   )
 }
